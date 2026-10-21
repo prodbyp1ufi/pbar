@@ -120,15 +120,59 @@ Singleton {
 
     // ── звук уведомлений (pw-play, файлы freedesktop) ──
 
-    // приложения, которые сами играют свой звук — наш не дублируем
-    readonly property var silentApps: ["telegram", "discord", "slack"]
+    // Свой звук приложения определяем автоматически, без списка: перед нашим
+    // звуком даём приложению грейс на запуск его плеера и ищем его активный
+    // стрим в PipeWire (pactl list sink-inputs) по имени приложения/desktop
+    // entry. Стрим найден — приложение играет само, наш не дублируем.
+    // Критические и локальные уведомления звучат сразу, без проверки.
+    function normToken(s) {
+        return String(s || "").toLowerCase().replace(/[\s._\-–—·]/g, "");
+    }
 
-    function appSilent(n) {
-        if (!n) return false;
-        var a = (String(n.appName || "") + " " + String(n.desktopEntry || "")).toLowerCase();
-        for (var i = 0; i < root.silentApps.length; i++)
-            if (a.indexOf(root.silentApps[i]) >= 0) return true;
-        return false;
+    property var sndPending: null // последний запрос звука (вытесняет предыдущий)
+    property var sndTokens: []
+    property bool sndCritical: false
+
+    function requestSound(n, critical) {
+        // токены считаем сразу — объект уведомления гарантированно жив
+        var name = String(n && n.appName || "");
+        var entry = String(n && n.desktopEntry || "");
+        var toks = [root.normToken(name), root.normToken(entry),
+                    root.normToken(name.split(" ")[0])];
+        root.sndPending = {
+            tokens: toks.filter(function (t) { return t.length >= 4; }),
+            critical: critical
+        };
+        sndGate.restart();
+    }
+
+    Timer {
+        id: sndGate
+        interval: 200
+        onTriggered: root.flushSound()
+    }
+
+    function flushSound() {
+        if (!root.sndPending) return;
+        if (sndProbe.running) { sndGate.restart(); return; } // дождаться текущей проверки
+        var p = root.sndPending;
+        root.sndPending = null;
+        root.sndTokens = p.tokens;
+        root.sndCritical = p.critical;
+        sndProbe.command = ["sh", "-c", "pactl list sink-inputs 2>/dev/null"];
+        sndProbe.running = true;
+    }
+
+    Process {
+        id: sndProbe
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var dump = root.normToken(this.text);
+                for (var i = 0; i < root.sndTokens.length; i++)
+                    if (dump.indexOf(root.sndTokens[i]) >= 0) return; // играет сам — молчим
+                root.playSound(root.sndCritical);
+            }
+        }
     }
 
     function playSound(critical) {
@@ -194,7 +238,8 @@ Singleton {
             console.log("[notifs] new:", n.appName, "critical:", critical);
             if (!root.dnd || critical) {
                 root.popups = root.popups.concat([n]).slice(-3);
-                if (!root.appSilent(n)) root.playSound(critical);
+                if (critical) root.playSound(true);
+                else root.requestSound(n, false);
             }
             n.closed.connect(function () {
                 console.log("[notifs] closed → history:", n.summary || "");

@@ -490,8 +490,31 @@ Item {
     Loader {
         id: toastLoader
 
-        property var cur: Notifs.popups.length > 0 ? Notifs.popups[Notifs.popups.length - 1] : null
-        readonly property int extra: Math.max(0, Notifs.popups.length - 1)
+        // содержимое — снимок полей, а не живой объект: сервер уничтожает
+        // уведомление после close, а снимок переживает его на время fade-out.
+        // Иначе при скрытии контент мгновенно схлопывается в пустое состояние
+        // (голый колокольчик) и тост «дозревает» над сжимающейся пилюлей
+        property var cur: null // {live, app, summary, body, icon, crit, hasImage}
+        property int extra: 0
+
+        Connections {
+            target: Notifs
+            function onPopupsChanged() {
+                var ps = Notifs.popups;
+                if (ps.length === 0) return; // гаснет с прежним снимком
+                var n = ps[ps.length - 1];
+                toastLoader.cur = {
+                    live: n,
+                    app: String(n.appName || ""),
+                    summary: String(n.summary || ""),
+                    body: String(n.body || ""),
+                    icon: Notifs.iconFor(n),
+                    crit: n.urgency === NotificationUrgency.Critical,
+                    hasImage: String(n.image || "").length > 0
+                };
+                toastLoader.extra = Math.max(0, ps.length - 1);
+            }
+        }
 
         anchors.centerIn: parent
         // ширина фикс — иначе цикл биндингов (контент растёт от ширины пилюли)
@@ -499,14 +522,16 @@ Item {
         height: item ? item.implicitHeight : 0
         opacity: pill.toastMode ? 1 : 0
         visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: Motion.standard } }
+        // тост гаснет быстрее, чем морфится пилюля (кривая морфа к 140 мс
+        // сжимает стекло на ~90%) — иначе контент «висит» в воздухе
+        Behavior on opacity { NumberAnimation { duration: Motion.fast; easing.type: Easing.OutCubic } }
 
         sourceComponent: Item {
             id: toastRoot
 
             property var n: toastLoader.cur
-            property bool crit: n ? n.urgency === NotificationUrgency.Critical : false
-            property string iconSrc: n ? Notifs.iconFor(n) : ""
+            property bool crit: n ? n.crit : false
+            property string iconSrc: n ? n.icon : ""
 
             readonly property int life: crit ? 8000 : 4600
 
@@ -522,16 +547,18 @@ Item {
                 running: toastRoot.n !== null && pill.toastMode && !toastRoot.crit
                 onTriggered: {
                     var n = toastRoot.n;
-                    if (n) Notifs.dismissNotif(n);
+                    if (n && n.live) Notifs.dismissNotif(n.live);
                 }
             }
 
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
+                // гаснущий тост мёртв: клики уходят в бар под ним
+                enabled: pill.toastMode
                 onClicked: {
-                    if (toastRoot.n) Notifs.activatePopup(toastRoot.n);
-                    else Notifs.clearPopups();
+                    if (toastRoot.n && toastRoot.n.live)
+                        Notifs.activatePopup(toastRoot.n.live);
                 }
             }
 
@@ -552,7 +579,7 @@ Item {
 
                     Image {
                         anchors.fill: parent
-                        anchors.margins: toastRoot.iconSrc.length > 0 && toastRoot.n && toastRoot.n.image ? 0 : 6 * pill.s
+                        anchors.margins: toastRoot.iconSrc.length > 0 && toastRoot.n && toastRoot.n.hasImage ? 0 : 6 * pill.s
                         source: toastRoot.iconSrc
                         sourceSize.width: 56
                         sourceSize.height: 56
@@ -579,8 +606,8 @@ Item {
 
                 Text {
                     width: parent.width
-                    visible: toastRoot.n && (toastRoot.n.appName || "").length > 0
-                    text: toastRoot.n ? toastRoot.n.appName : ""
+                    visible: toastRoot.n && toastRoot.n.app.length > 0
+                    text: toastRoot.n ? toastRoot.n.app : ""
                     color: Theme.faint
                     font.family: Theme.font
                     font.pixelSize: 8.5 * pill.s
@@ -620,7 +647,7 @@ Item {
 
                     Text {
                         width: parent.width - (toastRoot.crit ? 12 * pill.s : 0)
-                        text: toastRoot.n ? (toastRoot.n.summary || "") : ""
+                        text: toastRoot.n ? toastRoot.n.summary : ""
                         color: Theme.text
                         font.family: Theme.font
                         font.pixelSize: 11.5 * pill.s
@@ -632,8 +659,8 @@ Item {
 
                 Text {
                     width: parent.width
-                    visible: toastRoot.n && (toastRoot.n.body || "").length > 0
-                    text: toastRoot.n ? (toastRoot.n.body || "") : ""
+                    visible: toastRoot.n && toastRoot.n.body.length > 0
+                    text: toastRoot.n ? toastRoot.n.body : ""
                     color: Theme.dim
                     font.family: Theme.font
                     font.pixelSize: 10.5 * pill.s
