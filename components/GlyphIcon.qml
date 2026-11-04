@@ -292,22 +292,6 @@ Item {
             ctx.fill();
             break;
 
-        case "logout":
-            ctx.beginPath();
-            ctx.moveTo(9, 4);
-            ctx.lineTo(4, 4);
-            ctx.lineTo(4, 20);
-            ctx.lineTo(9, 20);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(10, 12);
-            ctx.lineTo(19.5, 12);
-            ctx.moveTo(15.5, 8);
-            ctx.lineTo(19.5, 12);
-            ctx.lineTo(15.5, 16);
-            ctx.stroke();
-            break;
-
         case "moon":
             // полумесяц контуром, в стиле остальных линейных иконок:
             // внешняя дуга слева + внутренняя дуга от рога к рогу
