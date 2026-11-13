@@ -17,6 +17,10 @@ Singleton {
 
     readonly property real frac: max > 0 ? Math.max(0, Math.min(1, cur / max)) : 0
 
+    // false, пока не пришло первое успешное чтение: заполнение cur/max из
+    // дефолта (frac 0 → реальное) на старте не должно показывать OSD яркости
+    property bool synced: false
+
     Component.onCompleted: probe.running = true
 
     function refresh() { getProc.running = true }
@@ -49,6 +53,9 @@ Singleton {
         root.cur = nums[0];
         root.max = nums[1];
         root.ok = true;
+        // synced — после присвоения: сигнал frac должен отработать, пока он ещё
+        // false, чтобы первичное заполнение не показало OSD
+        root.synced = true;
     }
 
     // первый запуск заодно проверяет наличие утилиты
