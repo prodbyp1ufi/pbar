@@ -88,14 +88,14 @@ Item {
     // ── OSD-поток: громкость/микрофон/яркость/зарядка → Osd.show ──
     Connections {
         target: Audio
-        function onSinkVolChanged() { if (!pill.open) Osd.show("vol", Audio.sinkVol, Audio.sinkMute); }
-        function onSinkMuteChanged() { if (!pill.open) Osd.show("vol", Audio.sinkVol, Audio.sinkMute); }
-        function onSrcVolChanged() { if (!pill.open) Osd.show("mic", Audio.srcVol, Audio.srcMute); }
-        function onSrcMuteChanged() { if (!pill.open) Osd.show("mic", Audio.srcVol, Audio.srcMute); }
+        function onSinkVolChanged() { if (Audio.synced && !pill.open) Osd.show("vol", Audio.sinkVol, Audio.sinkMute); }
+        function onSinkMuteChanged() { if (Audio.synced && !pill.open) Osd.show("vol", Audio.sinkVol, Audio.sinkMute); }
+        function onSrcVolChanged() { if (Audio.synced && !pill.open) Osd.show("mic", Audio.srcVol, Audio.srcMute); }
+        function onSrcMuteChanged() { if (Audio.synced && !pill.open) Osd.show("mic", Audio.srcVol, Audio.srcMute); }
     }
     Connections {
         target: Bright
-        function onFracChanged() { if (!pill.open) Osd.show("bright", Bright.frac, false); }
+        function onFracChanged() { if (Bright.synced && !pill.open) Osd.show("bright", Bright.frac, false); }
     }
     Connections {
         target: Battery

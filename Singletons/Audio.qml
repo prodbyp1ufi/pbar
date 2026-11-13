@@ -18,6 +18,11 @@ Singleton {
     property real srcVol: 0
     property bool srcMute: false
 
+    // false, пока не пришло первое успешное чтение: заполнение значений из
+    // нулевого дефолта на старте не должно выглядеть как изменение громкости
+    // (иначе OSD мелькает «выключилось/включилось» при запуске бара)
+    property bool synced: false
+
     // ── защита от гонок get/set ──
     // Ответ get нельзя применять, если во время его полёта состояние могло
     // измениться: ушла команда set (кнопка/IPC) или пришло событие PipeWire
@@ -181,6 +186,9 @@ Singleton {
                 if (s) { root.sinkVol = s.vol; root.sinkMute = s.mute; }
                 var r = root.parseVol(parts[1]);
                 if (r) { root.srcVol = r.vol; root.srcMute = r.mute; }
+                // synced — последним: сигналы выше должны отработать, пока он ещё
+                // false, чтобы первичное заполнение не показало OSD
+                if (s || r) root.synced = true;
             }
         }
     }
