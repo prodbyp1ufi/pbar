@@ -22,6 +22,11 @@ Singleton {
     readonly property bool full: state === UPowerDeviceState.FullyCharged || pct >= 100
     readonly property bool low: discharging && pct <= 20
 
+    // «от сети»: надёжнее, чем state === Charging — покрывает PendingCharge и
+    // ограничение заряда прошивкой, когда Charging может так и не наступить,
+    // из-за чего авто-экономия не снималась после подключения зарядки
+    readonly property bool acPowered: !UPower.onBattery
+
     // уведомления о низком заряде: защёлки, чтобы не спамить каждый опрос
     property bool _warnLow: false
     property bool _warn10: false
@@ -79,13 +84,41 @@ Singleton {
     property string _profile: ""
     readonly property string profile: _profile
 
+    // Профиль ведём оптимистично, а не по ответу powerprofilesctl get: get
+    // асинхронный и отстаёт от set. Из-за сравнения запроса с этим устаревшим
+    // значением рестор авто-экономии мог проглатываться гонкой get/set, и
+    // профиль залипал на power-saver. _wantProfile — последняя цель; при
+    // занятом set она доводится в ppSet.onExited.
+    property string _wantProfile: ""
+
     function refreshProfile() {
         ppGet.running = true;
     }
 
+    // публичный выбор профиля отменяет авто-экономию: иначе рестор после
+    // зарядки вернул бы профиль вопреки выбору пользователя
     function setProfile(p) {
-        if (!p.length || p === _profile || ppSet.running) return;
-        ppSet.command = ["powerprofilesctl", "set", p];
+        root._saverLatched = false;
+        root._preSaverProfile = "";
+        root._requestProfile(p);
+    }
+
+    // внутренний запрос профиля (в т.ч. из авто-экономии)
+    function _requestProfile(p) {
+        if (!p.length || p === root._wantProfile) return;
+        root._wantProfile = p;
+        root._pumpProfile();
+    }
+
+    // доводит _wantProfile до демона; пока set занят — применится в ppSet.onExited
+    function _pumpProfile() {
+        if (ppSet.running) return;
+        if (!root._wantProfile.length || root._wantProfile === root._profile) {
+            root.refreshProfile();
+            return;
+        }
+        root._profile = root._wantProfile; // оптимистично: UI и решения не ждут get
+        ppSet.command = ["powerprofilesctl", "set", root._wantProfile];
         ppSet.running = true;
     }
 
@@ -94,7 +127,13 @@ Singleton {
         command: ["powerprofilesctl", "get"]
         stdout: StdioCollector {
             onStreamFinished: {
-                root._profile = this.text.trim();
+                var p = this.text.trim();
+                // пока идёт запись — ответ get устарел (старое состояние демона),
+                // не перетираем им свежую цель
+                if (p.length && !ppSet.running) {
+                    root._profile = p;
+                    root._wantProfile = p; // внешнее изменение принимаем за цель
+                }
                 root.maybeAutoSaver();
             }
         }
@@ -102,12 +141,12 @@ Singleton {
 
     Process {
         id: ppSet
-        onExited: root.refreshProfile()
+        onExited: root._pumpProfile()
     }
 
     // ── авто-переход на power-saver ниже порога (0 = выключено) ──
     // Переключает один раз при пересечении порога вниз; наверху порога
-    // защёлка сбрасывается. Зарядка/полный заряд снимают защёлку.
+    // защёлка сбрасывается. Питание от сети/полный заряд снимают защёлку.
     property int saverAt: 0
     property bool _saverLatched: false
     property string _preSaverProfile: ""
@@ -115,17 +154,18 @@ Singleton {
     // авто-экономия снялась — вернуть профиль, который был до переключения
     function _releaseSaver() {
         root._saverLatched = false;
-        if (root._preSaverProfile.length && _profile === "power-saver")
-            setProfile(root._preSaverProfile);
+        var back = root._preSaverProfile;
         root._preSaverProfile = "";
+        if (back.length) _requestProfile(back);
     }
 
     function maybeAutoSaver() {
-        if (root.saverAt <= 0) {
+        if (!root.present || root.saverAt <= 0) {
             if (root._saverLatched) _releaseSaver();
             return;
         }
-        if (root.charging || root.full) {
+        // от сети (или полная) экономия не нужна — снимаем и возвращаем профиль
+        if (root.acPowered || root.full) {
             if (root._saverLatched) _releaseSaver();
             return;
         }
@@ -133,7 +173,7 @@ Singleton {
             root._saverLatched = true;
             if (_profile.length && _profile !== "power-saver") {
                 root._preSaverProfile = _profile;
-                setProfile("power-saver");
+                _requestProfile("power-saver");
             }
         } else if (root._saverLatched && root.pct > root.saverAt) {
             _releaseSaver();
@@ -156,6 +196,9 @@ Singleton {
         maybeAutoSaver();
         checkLowBattery();
     }
+    // подключение/отключение зарядки надёжнее ловить по источнику питания:
+    // state может пройти PendingCharge или остаться Discharging при лимите заряда
+    onAcPoweredChanged: maybeAutoSaver()
 
     // ── персист порога: отдельная папка бара в кэше ──
     readonly property string cacheBase:
